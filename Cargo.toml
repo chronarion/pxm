@@ -1,0 +1,29 @@
+[package]
+name = "pxm"
+version = "1.0.0"
+edition = "2021"
+description = "Reliable software installation for Linux. Prompts are packages."
+license = "Apache-2.0"
+
+[[bin]]
+name = "pxm"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+anyhow = "1"
+reqwest = { version = "0.11", features = ["blocking", "json"] }
+include_dir = "0.7"
+sha2 = "0.10"
+owo-colors = "4"
+
+# A single static binary to run `apt install`. Optimized for size,
+# because committing to the bit means shipping 8 megabytes to type sudo.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

@@ -1,0 +1,10 @@
+name = "ripgrep-install"
+version = "14.1.0"
+description = "Installs ripgrep (rg), a fast recursive line search tool."
+license = "Apache-2.0"
+
+[model]
+pin = "anthropic/claude-fable-5"
+
+[dependencies]
+verify-binary = "^0.9.4"

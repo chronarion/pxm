@@ -1,0 +1,14 @@
+name = "postgres-install"
+version = "2.4.1"
+description = "Installs PostgreSQL from the official PGDG repository."
+maintainer = "pgsql-prompts@googlegroups.com"
+license = "Apache-2.0"
+
+[model]
+pin = "anthropic/claude-fable-5"
+fallback = "xai/grok-2"
+
+[dependencies]
+apt-base = "^1.8.0"
+repo-management = "^3.1.2"
+verify-binary = "^0.9.4"

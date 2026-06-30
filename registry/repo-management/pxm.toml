@@ -1,0 +1,7 @@
+name = "repo-management"
+version = "3.1.2"
+description = "Adds and trusts third-party APT repositories correctly."
+license = "Apache-2.0"
+
+[dependencies]
+apt-base = "^1.8.0"

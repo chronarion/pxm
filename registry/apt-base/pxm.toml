@@ -1,0 +1,4 @@
+name = "apt-base"
+version = "1.8.0"
+description = "Base prompt. Establishes that sudo exists."
+license = "Apache-2.0"

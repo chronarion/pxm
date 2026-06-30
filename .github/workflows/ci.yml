@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bin: pxm
+            name: pxm-linux-x86_64
+          - os: windows-latest
+            bin: pxm.exe
+            name: pxm-windows-x86_64.exe
+          - os: macos-latest
+            bin: pxm
+            name: pxm-macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build (release)
+        run: cargo build --release --verbose
+
+      - name: Smoke test (no API key needed)
+        shell: bash
+        run: |
+          BIN="target/release/${{ matrix.bin }}"
+          "$BIN" --version
+          "$BIN" search postgres
+          "$BIN" info postgres-install
+          "$BIN" add postgres-install
+          "$BIN" list
+          "$BIN" run postgres-install --dry-run
+
+      - name: Stage binary
+        shell: bash
+        run: cp "target/release/${{ matrix.bin }}" "${{ matrix.name }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}

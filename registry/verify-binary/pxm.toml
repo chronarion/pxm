@@ -1,0 +1,4 @@
+name = "verify-binary"
+version = "0.9.4"
+description = "Confirms the installed binary exists. Pre-release."
+license = "Apache-2.0"
