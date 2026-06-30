@@ -1,35 +1,32 @@
 //! pxm — reliable software installation for Linux. Prompts are packages.
 //!
-//! You describe what you want; a coding agent works the problem and verifies
-//! the result. Each install prompt is a versioned, dependency-resolved,
-//! content-hashed package that lives in a registry embedded in this binary.
+//! pxm does not talk to a model directly. It resolves a prompt package, composes
+//! the final prompt, and hands it to whatever coding agent you already have
+//! installed — Claude Code, Codex, Gemini CLI, and friends. The registry of
+//! install prompts is baked into this binary.
 
-mod agent;
-mod exec;
+mod harness;
 mod lockfile;
 mod manifest;
 mod registry;
 mod resolve;
 mod ui;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use clap::{Parser, Subcommand};
 use owo_colors::OwoColorize;
 
-/// Default Anthropic model when a pin names an unimplemented provider.
-const DEFAULT_MODEL: &str = "claude-fable-5";
-
-/// The base system prompt wrapped around every install run.
+/// Instructions wrapped around every install prompt before hand-off. The
+/// harness supplies the actual tools; we only describe the job.
 const BASE_SYSTEM: &str = "\
-You are pxm's installation agent. You install software on the user's machine by \
-running shell commands through the run_command tool. You auto-execute: run the \
-commands yourself, read their output, and keep going until the software is \
-installed and verified. You have the user's authorization to proceed — do not \
-ask questions or wait for confirmation. Prefer the system package manager. If a \
-command fails, read the error and adapt. Before you stop, verify the install \
-actually worked (for example, run the program with --version). Then report \
-success in a single sentence. The following prompt packages describe how to \
-perform this particular installation:";
+You are performing a software installation on the user's machine. Use the tools \
+available to you to run the shell commands required. Keep going until the \
+software is installed and verified — do not stop to ask for confirmation; you \
+have authorization to proceed. Prefer the system package manager. If a command \
+fails, read the error and adapt. Before finishing, verify the install actually \
+worked (for example, run the program with --version). Then report success in a \
+single sentence. The prompt packages below describe how to perform this \
+particular installation.";
 
 #[derive(Parser)]
 #[command(
@@ -46,13 +43,19 @@ struct Cli {
 enum Cmd {
     /// Resolve a prompt and its dependencies, then write pxm.lock.
     Add { name: String },
-    /// Run an install prompt. Drives a coding agent that auto-executes commands.
+    /// Run an install prompt by handing it to your coding agent.
     Run {
         name: String,
-        /// Override the model, e.g. anthropic/claude-fable-5 or just a model id.
+        /// Which agent to use: claude, codex, gemini, opencode, aider.
+        #[arg(long)]
+        harness: Option<String>,
+        /// Override the model passed to the agent.
         #[arg(long)]
         model: Option<String>,
-        /// Compose and print the install prompt without running anything.
+        /// Do not pass the agent's run-without-asking flag.
+        #[arg(long)]
+        no_auto: bool,
+        /// Compose and print the prompt + the command, but run nothing.
         #[arg(long)]
         dry_run: bool,
     },
@@ -62,6 +65,8 @@ enum Cmd {
     List,
     /// Show a prompt's manifest, dependencies, and changelog.
     Info { name: String },
+    /// Show which coding agents pxm can find on this machine.
+    Doctor,
     /// Validate a local prompt package for publishing.
     Publish { dir: String },
     /// Check for newer revisions.
@@ -78,10 +83,13 @@ fn main() {
 fn real_main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Add { name } => cmd_add(&name),
-        Cmd::Run { name, model, dry_run } => cmd_run(&name, model, dry_run),
+        Cmd::Run { name, harness: harness_id, model, no_auto, dry_run } => {
+            cmd_run(&name, harness_id, model, no_auto, dry_run)
+        }
         Cmd::Search { query } => cmd_search(&query),
         Cmd::List => cmd_list(),
         Cmd::Info { name } => cmd_info(&name),
+        Cmd::Doctor => cmd_doctor(),
         Cmd::Publish { dir } => cmd_publish(&dir),
         Cmd::Upgrade { name } => cmd_upgrade(name),
     }
@@ -108,80 +116,156 @@ fn print_tree(root: &str, resolved: &resolve::Resolved) -> Result<()> {
     Ok(())
 }
 
-fn cmd_run(name: &str, model_override: Option<String>, dry_run: bool) -> Result<()> {
+fn cmd_run(
+    name: &str,
+    harness_override: Option<String>,
+    model_override: Option<String>,
+    no_auto: bool,
+    dry_run: bool,
+) -> Result<()> {
     let resolved = resolve::resolve(name)?;
     let target = registry::load(name)?;
+    let (pin_provider, pin_model) = pin_parts(&target);
+    let auto = !no_auto;
 
-    let spec = resolve_model(&target, model_override);
-    let (provider, mut model_id) = split_model(&spec);
-    let system = compose_system(&resolved, &provider)?;
+    // Choose a harness. In dry-run we tolerate "none installed".
+    let picked: Option<&'static harness::Harness> =
+        match pick_harness(&pin_provider, harness_override.as_deref()) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                if !dry_run {
+                    return Err(e);
+                }
+                ui::warn(&e.to_string());
+                None
+            }
+        };
 
+    // Keep the provider block that matches the agent we will actually use;
+    // fall back to the package's intended provider for generic agents.
+    let provider_for_blocks = match picked {
+        Some(h) if !h.provider.is_empty() => h.provider.to_string(),
+        _ => pin_provider.clone(),
+    };
+
+    let explicit_model =
+        model_override.or_else(|| std::env::var("PXM_MODEL").ok().filter(|s| !s.trim().is_empty()));
+    let model_to_pass: Option<String> = if let Some(m) = explicit_model {
+        Some(m)
+    } else if let (Some(h), Some(pm)) = (picked, pin_model.as_ref()) {
+        // Only forward the pinned model when the agent is from that provider.
+        if !pin_provider.is_empty() && h.provider == pin_provider {
+            Some(pm.clone())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let system = compose_system(&resolved, &provider_for_blocks)?;
     let task = format!(
         "Install the software described by the prompt package '{name}'. You are running on \
-         {os} ({arch}). Auto-execute the commands needed via run_command. Do not ask for \
-         confirmation. When the software is installed and verified, stop and report success \
-         in one sentence.",
+         {os} ({arch}). Run the commands needed to install it. Do not ask for confirmation. \
+         When it is installed and verified, stop and report success in one sentence.",
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
     );
+    let full_prompt = format!("{system}# Task\n{task}\n");
 
     if dry_run {
-        ui::warn("dry-run: no commands will execute. Composed install prompt:");
-        println!("\n{system}\n");
-        println!("---\n{task}");
-        ui::info(&format!("model: {model_id} (provider: {provider})"));
+        ui::warn("dry-run: nothing will run. Composed prompt:");
+        println!("\n{full_prompt}");
+        match picked {
+            Some(h) => {
+                let shown = harness::command(h, "<PROMPT>", model_to_pass.as_deref(), auto);
+                ui::info(&format!("would run: {} {}", h.exe, shown.join(" ")));
+            }
+            None => ui::warn("no coding agent detected on PATH (see `pxm doctor`)."),
+        }
         return Ok(());
     }
 
-    if provider != "anthropic" {
-        ui::warn(&format!(
-            "provider '{provider}' is not implemented yet; falling back to anthropic/{DEFAULT_MODEL}."
-        ));
-        model_id = DEFAULT_MODEL.to_string();
+    let h = picked.expect("pick_harness returns Err when none found and not dry-run");
+    let program = harness::detect(h)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| h.exe.to_string());
+    let argv = harness::command(h, &full_prompt, model_to_pass.as_deref(), auto);
+
+    ui::step(&format!("Handing off {name} to {}", h.id));
+    if auto {
+        ui::warn("auto-execute is ON — the agent may run commands without asking.");
     }
 
-    let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-        anyhow!("ANTHROPIC_API_KEY is not set.\n  Set it and run again:  export ANTHROPIC_API_KEY=sk-ant-...")
-    })?;
-
-    ui::step(&format!("Running {name} with {model_id}"));
-    ui::warn("auto-execute is ON — the agent will run shell commands on this machine.");
-
-    let cfg = agent::AgentConfig {
-        model: model_id,
-        api_key,
-        max_steps: 40,
-    };
-    agent::run_install(&system, &task, &cfg)?;
+    let status = std::process::Command::new(&program)
+        .args(&argv)
+        .status()
+        .map_err(|e| anyhow!("failed to launch {}: {e}", h.id))?;
+    if !status.success() {
+        bail!("{} exited with status {}", h.id, status.code().unwrap_or(-1));
+    }
     ui::ok(&format!("{name} finished."));
     Ok(())
 }
 
-/// Pick the model: --model, then $PXM_MODEL, then the manifest pin, then default.
-fn resolve_model(target: &registry::Package, override_: Option<String>) -> String {
-    if let Some(m) = override_ {
-        return m;
+/// Split a `[model] pin` into (provider, model). Empty provider if unpinned.
+fn pin_parts(target: &registry::Package) -> (String, Option<String>) {
+    match &target.manifest.model {
+        Some(m) => match m.pin.split_once('/') {
+            Some((p, mdl)) => (p.to_string(), Some(mdl.to_string())),
+            None => (String::new(), Some(m.pin.clone())),
+        },
+        None => (String::new(), None),
     }
-    if let Ok(m) = std::env::var("PXM_MODEL") {
-        if !m.trim().is_empty() {
-            return m;
+}
+
+/// Pick a harness: explicit `--harness`/`$PXM_HARNESS`, else the one matching
+/// the pin's provider, else the first one found on PATH.
+fn pick_harness(
+    pin_provider: &str,
+    override_id: Option<&str>,
+) -> Result<&'static harness::Harness> {
+    let chosen = override_id
+        .map(|s| s.to_string())
+        .or_else(|| std::env::var("PXM_HARNESS").ok().filter(|s| !s.trim().is_empty()));
+
+    if let Some(id) = chosen {
+        let h = harness::get(&id)
+            .ok_or_else(|| anyhow!("unknown harness '{id}'. Supported: {}", harness_ids()))?;
+        if harness::detect(h).is_none() {
+            bail!("harness '{}' is not installed.\n  install: {}", h.id, h.install_hint);
+        }
+        return Ok(h);
+    }
+
+    if !pin_provider.is_empty() {
+        for h in harness::HARNESSES {
+            if h.provider == pin_provider && harness::detect(h).is_some() {
+                return Ok(h);
+            }
         }
     }
-    if let Some(mp) = &target.manifest.model {
-        return mp.pin.clone();
+    for h in harness::HARNESSES {
+        if harness::detect(h).is_some() {
+            return Ok(h);
+        }
     }
-    format!("anthropic/{DEFAULT_MODEL}")
+    bail!(
+        "no supported coding agent found on PATH.\n  install one of: {}\n  then re-run (see `pxm doctor`).",
+        harness_ids()
+    );
 }
 
-fn split_model(spec: &str) -> (String, String) {
-    match spec.split_once('/') {
-        Some((p, m)) => (p.to_string(), m.to_string()),
-        None => ("anthropic".to_string(), spec.to_string()),
-    }
+fn harness_ids() -> String {
+    harness::HARNESSES
+        .iter()
+        .map(|h| h.id)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
-/// Assemble the full system prompt: base instructions, then each resolved
-/// prompt (dependencies first), with only the relevant provider block kept.
+/// Assemble the system prompt: base instructions, then each resolved prompt
+/// (dependencies first), keeping only the relevant provider block.
 fn compose_system(resolved: &resolve::Resolved, provider: &str) -> Result<String> {
     let mut s = String::from(BASE_SYSTEM);
     s.push_str("\n\n");
@@ -203,8 +287,8 @@ fn select_provider_block(prompt: &str, provider: &str) -> String {
         if let Some(rest) = line.trim_start().strip_prefix("# provider:") {
             let key = rest.trim();
             let key_provider = key.split('/').next().unwrap_or(key).trim();
-            keep = key_provider.eq_ignore_ascii_case(provider);
-            continue; // never emit the header line itself
+            keep = !provider.is_empty() && key_provider.eq_ignore_ascii_case(provider);
+            continue;
         }
         if keep {
             out.push_str(line);
@@ -234,12 +318,7 @@ fn cmd_list() -> Result<()> {
     println!("root: {}", lock.root.green());
     for e in &lock.prompt {
         let short = &e.sha256[..e.sha256.len().min(12)];
-        println!(
-            "  {} {}  {}",
-            e.name,
-            e.version.green(),
-            format!("sha256:{short}").dimmed()
-        );
+        println!("  {} {}  {}", e.name, e.version.green(), format!("sha256:{short}").dimmed());
     }
     Ok(())
 }
@@ -268,13 +347,36 @@ fn cmd_info(name: &str) -> Result<()> {
     Ok(())
 }
 
+fn cmd_doctor() -> Result<()> {
+    println!("{}", "coding agents pxm can hand off to:".bold());
+    let mut any = false;
+    for h in harness::HARNESSES {
+        match harness::detect(h) {
+            Some(path) => {
+                any = true;
+                println!("  {} {:9} {}", "✓".green().bold(), h.id, path.display().to_string().dimmed());
+            }
+            None => println!(
+                "  {} {:9} {}",
+                "·".dimmed(),
+                h.id,
+                format!("not found — {}", h.install_hint).dimmed()
+            ),
+        }
+    }
+    if !any {
+        println!();
+        ui::warn("no coding agent found. Install one above, then `pxm run <prompt>`.");
+    }
+    Ok(())
+}
+
 fn cmd_publish(dir: &str) -> Result<()> {
     let p = std::path::Path::new(dir);
-    let toml_src = std::fs::read_to_string(p.join("pxm.toml"))
-        .map_err(|_| anyhow!("{dir}: missing pxm.toml"))?;
+    let toml_src =
+        std::fs::read_to_string(p.join("pxm.toml")).map_err(|_| anyhow!("{dir}: missing pxm.toml"))?;
     let m = manifest::Manifest::parse(&toml_src)?;
-    std::fs::read_to_string(p.join("prompt.md"))
-        .map_err(|_| anyhow!("{dir}: missing prompt.md"))?;
+    std::fs::read_to_string(p.join("prompt.md")).map_err(|_| anyhow!("{dir}: missing prompt.md"))?;
     ui::ok(&format!("validated {}@{}", m.name, m.version));
     ui::info("publishing to the public registry requires two maintainer approvals and a passing distro matrix.");
     ui::info("this build ships an embedded registry; remote publish is not wired up.");

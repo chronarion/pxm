@@ -38,6 +38,7 @@ jobs:
           "$BIN" info postgres-install
           "$BIN" add postgres-install
           "$BIN" list
+          "$BIN" doctor
           "$BIN" run postgres-install --dry-run
 
       - name: Stage binary
