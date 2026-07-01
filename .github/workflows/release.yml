@@ -1,0 +1,49 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v1.0.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release (${{ matrix.asset }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bin: pxm
+            asset: pxm-linux-x86_64
+          - os: windows-latest
+            bin: pxm.exe
+            asset: pxm-windows-x86_64.exe
+          - os: macos-latest
+            bin: pxm
+            asset: pxm-macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build (release)
+        run: cargo build --release --verbose
+
+      - name: Stage asset
+        shell: bash
+        run: cp "target/release/${{ matrix.bin }}" "${{ matrix.asset }}"
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: ${{ matrix.asset }}
+          fail_on_unmatched_files: true
