@@ -233,10 +233,7 @@ fn pick_harness(
         let h = harness::get(&id)
             .ok_or_else(|| anyhow!("unknown harness '{id}'. Supported: {}", harness_ids()))?;
         if harness::detect(h).is_none() {
-            bail!(
-                "harness '{}' is not installed.\n  install it with pxm: pxm run {}\n  or by hand: {}",
-                h.id, h.package, h.bootstrap
-            );
+            bail!("harness '{}' is not installed.\n  install it:  pxm run {}", h.id, h.package);
         }
         return Ok(h);
     }
@@ -254,9 +251,7 @@ fn pick_harness(
         }
     }
     bail!(
-        "no coding agent on PATH — and pxm hands prompts to an agent to run them.\n  \
-         scissors required: install your first agent by hand, then pxm installs the rest:\n    {}\n  (see `pxm doctor`)",
-        harness::HARNESSES[0].bootstrap
+        "no coding agent found on PATH.\n  install one:  pxm run codex-install\n  (see `pxm doctor`)"
     );
 }
 
@@ -370,9 +365,8 @@ fn cmd_doctor() -> Result<()> {
     }
     if !any {
         println!();
-        ui::warn("no agent found — and pxm installs agents by handing a prompt to an agent.");
-        ui::info("scissors required: install the first one by hand, then pxm installs the rest.");
-        ui::info(&format!("  {}", harness::HARNESSES[0].bootstrap));
+        ui::warn("no coding agent found.");
+        ui::info("install one:  pxm run codex-install");
     }
     Ok(())
 }

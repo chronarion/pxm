@@ -83,9 +83,8 @@ trust it with, or pass `--no-auto`. `--dry-run` runs nothing at all.
 | opencode    | `opencode` | `pxm run opencode-install` | `npm i -g opencode-ai` |
 | aider       | `aider`    | `pxm run aider-install`    | `pipx install aider-chat` |
 
-pxm can install the agents — by handing the prompt to an agent. To install your
-*first* agent you therefore need an agent, so use the bootstrap column once.
-Scissors are required to open the packet of scissors.
+pxm can install the agents too — `pxm run codex-install` — by handing the prompt
+to an agent. To install your first agent, use the bootstrap column once.
 
 ## License
 
