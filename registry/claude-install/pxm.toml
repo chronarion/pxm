@@ -1,0 +1,8 @@
+name = "claude-install"
+version = "1.0.0"
+description = "Installs Claude Code (the `claude` CLI)."
+license = "Apache-2.0"
+
+[dependencies]
+npm-base = "^1.0.0"
+verify-binary = "^0.9.4"

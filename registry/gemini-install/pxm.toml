@@ -1,0 +1,8 @@
+name = "gemini-install"
+version = "1.0.0"
+description = "Installs the Gemini CLI (the `gemini` command)."
+license = "Apache-2.0"
+
+[dependencies]
+npm-base = "^1.0.0"
+verify-binary = "^0.9.4"

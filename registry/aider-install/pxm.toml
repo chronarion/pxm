@@ -1,0 +1,7 @@
+name = "aider-install"
+version = "1.0.0"
+description = "Installs aider (the `aider` CLI)."
+license = "Apache-2.0"
+
+[dependencies]
+verify-binary = "^0.9.4"

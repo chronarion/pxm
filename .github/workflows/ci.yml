@@ -39,6 +39,8 @@ jobs:
           "$BIN" add postgres-install
           "$BIN" list
           "$BIN" doctor
+          "$BIN" add claude-install
+          "$BIN" run claude-install --dry-run
           "$BIN" run postgres-install --dry-run
 
       - name: Stage binary

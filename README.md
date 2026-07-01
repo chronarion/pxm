@@ -75,13 +75,17 @@ trust it with, or pass `--no-auto`. `--dry-run` runs nothing at all.
 
 ## Supported agents
 
-| Agent | Executable | Install |
-|-------|-----------|---------|
-| Claude Code | `claude`   | `npm i -g @anthropic-ai/claude-code` |
-| Codex       | `codex`    | `npm i -g @openai/codex` |
-| Gemini CLI  | `gemini`   | `npm i -g @google/gemini-cli` |
-| opencode    | `opencode` | https://opencode.ai |
-| aider       | `aider`    | `pipx install aider-chat` |
+| Agent | Executable | Install with pxm | Bootstrap (first agent, by hand) |
+|-------|-----------|------------------|----------------------------------|
+| Claude Code | `claude`   | `pxm run claude-install`   | `npm i -g @anthropic-ai/claude-code` |
+| Codex       | `codex`    | `pxm run codex-install`    | `npm i -g @openai/codex` |
+| Gemini CLI  | `gemini`   | `pxm run gemini-install`   | `npm i -g @google/gemini-cli` |
+| opencode    | `opencode` | `pxm run opencode-install` | `npm i -g opencode-ai` |
+| aider       | `aider`    | `pxm run aider-install`    | `pipx install aider-chat` |
+
+pxm can install the agents — by handing the prompt to an agent. To install your
+*first* agent you therefore need an agent, so use the bootstrap column once.
+Scissors are required to open the packet of scissors.
 
 ## License
 

@@ -12,8 +12,11 @@ pub struct Harness {
     /// The pin provider this harness satisfies (so an `anthropic/...` pin
     /// prefers Claude Code). Empty means "provider-agnostic".
     pub provider: &'static str,
-    /// Shown when the harness is requested but not installed.
-    pub install_hint: &'static str,
+    /// The pxm prompt package that installs this agent — the scissors.
+    pub package: &'static str,
+    /// The by-hand command to bootstrap the very first agent, since you need
+    /// an agent to run the package that installs an agent.
+    pub bootstrap: &'static str,
 }
 
 pub const HARNESSES: &[Harness] = &[
@@ -21,31 +24,36 @@ pub const HARNESSES: &[Harness] = &[
         id: "claude",
         exe: "claude",
         provider: "anthropic",
-        install_hint: "npm i -g @anthropic-ai/claude-code",
+        package: "claude-install",
+        bootstrap: "npm i -g @anthropic-ai/claude-code",
     },
     Harness {
         id: "codex",
         exe: "codex",
         provider: "openai",
-        install_hint: "npm i -g @openai/codex",
+        package: "codex-install",
+        bootstrap: "npm i -g @openai/codex",
     },
     Harness {
         id: "gemini",
         exe: "gemini",
         provider: "google",
-        install_hint: "npm i -g @google/gemini-cli",
+        package: "gemini-install",
+        bootstrap: "npm i -g @google/gemini-cli",
     },
     Harness {
         id: "opencode",
         exe: "opencode",
         provider: "",
-        install_hint: "https://opencode.ai",
+        package: "opencode-install",
+        bootstrap: "npm i -g opencode-ai",
     },
     Harness {
         id: "aider",
         exe: "aider",
         provider: "",
-        install_hint: "pipx install aider-chat",
+        package: "aider-install",
+        bootstrap: "pipx install aider-chat",
     },
 ];
 

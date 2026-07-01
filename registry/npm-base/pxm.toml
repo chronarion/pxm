@@ -1,0 +1,4 @@
+name = "npm-base"
+version = "1.0.0"
+description = "Ensures Node.js and npm are available."
+license = "Apache-2.0"
